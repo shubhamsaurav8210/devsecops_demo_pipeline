@@ -3,6 +3,32 @@ name: CI
 on: [push]
 
 jobs:
+  sast_scan:
+    name: Run Bandit Scan
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.11
+
+    - name: Install Bandit
+      run: pip install bandit
+
+    - name: Run Bandit Scan
+      run: bandit -ll -ii -r . -f json -o bandit-report.json
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: bandit-findings
+        path: bandit-report.json
+
   image_scan:
     name: Build Image and Run Image Scan
     runs-on: ubuntu-latest
@@ -14,44 +40,30 @@ jobs:
     - name: Set up Docker
       uses: docker/setup-buildx-action@v2
 
-    - name: Clean Docker Cache
-      run: |
-        docker system prune -af
-        docker builder prune --force
-
-    - name: Log in to DockerHub
-      run: echo "${{ secrets.REPO_PWD }}" | docker login -u "${{ secrets.REPO_USER }}" --password-stdin
-
     - name: Build Docker Image
       run: |
-        docker build -f Dockerfile -t myapp:latest .
-        docker tag myapp:latest ${{ secrets.REPO_USER }}/myapp:latest
-
-    - name: Verify Built Image
-      run: docker images | grep "myapp" || echo "Docker image not found!"
-
-    - name: Push Image to DockerHub
-      run: docker push ${{ secrets.REPO_USER }}/myapp:latest
-
-    - name: Fix Docker Scout Directory
-      run: mkdir -p /tmp/docker-scout/
-
+        docker build -f Dockerfile -t myapp:latest . 
     - name: Docker Scout Scan
       uses: docker/scout-action@v1.1.0
       with:
-        image: ${{ secrets.REPO_USER }}/myapp:latest  # Ensure remote image is used
         dockerhub-user: ${{ secrets.REPO_USER }}
         dockerhub-password: ${{ secrets.REPO_PWD }}
         command: quickview,cves
         only-severities: critical,high
-        sarif-file: reports/scout-report.sarif
+        sarif-file: scout-report.sarif
 
-    - name: Debug SARIF File
-      run: ls -lah reports/scout-report.sarif || echo "SARIF file not found!"
+    - name: Verify SARIF File
+      run: |
+        if [ -f scout-report.sarif ]; then
+          echo "SARIF file generated successfully.";
+        else
+          echo "SARIF file not found.";
+          exit 1;
+        fi
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       if: always()
       with:
         name: docker-scout-findings
-        path: reports/scout-report.sarif
+        path: scout-report.sarif
